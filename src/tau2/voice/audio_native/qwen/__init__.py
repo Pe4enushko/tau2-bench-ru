@@ -13,7 +13,6 @@ Audio Formats:
 Reference: https://www.alibabacloud.com/help/en/model-studio/realtime
 """
 
-from tau2.voice.audio_native.qwen.audio_utils import calculate_qwen_bytes_per_tick
 from tau2.voice.audio_native.qwen.discrete_time_adapter import DiscreteTimeQwenAdapter
 from tau2.voice.audio_native.qwen.events import (
     BaseQwenEvent,
@@ -51,8 +50,6 @@ __all__ = [
     "QwenVADMode",
     # Adapter
     "DiscreteTimeQwenAdapter",
-    # Audio utilities
-    "calculate_qwen_bytes_per_tick",
     # Constants
     "DEFAULT_QWEN_MODEL",
     "DEFAULT_QWEN_REALTIME_URL",

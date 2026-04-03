@@ -37,19 +37,14 @@ from tau2.config import (
     DEFAULT_AUDIO_NATIVE_CONNECT_TIMEOUT,
     DEFAULT_AUDIO_NATIVE_DISCONNECT_TIMEOUT,
     DEFAULT_AUDIO_NATIVE_TICK_TIMEOUT_BUFFER,
+    DEFAULT_GEMINI_INPUT_SAMPLE_RATE,
+    DEFAULT_GEMINI_OUTPUT_SAMPLE_RATE,
 )
 from tau2.data_model.message import ToolCall
 from tau2.environment.tool import Tool
 from tau2.voice.audio_native.adapter import DiscreteTimeAdapter
 from tau2.voice.audio_native.async_loop import BackgroundAsyncLoop
 from tau2.voice.audio_native.audio_converter import StreamingTelephonyConverter
-from tau2.voice.audio_native.gemini.audio_utils import (
-    GEMINI_INPUT_BYTES_PER_SECOND,
-    GEMINI_INPUT_SAMPLE_RATE,
-    GEMINI_OUTPUT_BYTES_PER_SECOND,
-    GEMINI_OUTPUT_SAMPLE_RATE,
-    calculate_gemini_bytes_per_tick,
-)
 from tau2.voice.audio_native.gemini.events import (
     GeminiAudioDeltaEvent,
     GeminiAudioDoneEvent,
@@ -67,6 +62,9 @@ from tau2.voice.audio_native.tick_result import (
     TickResult,
     UtteranceTranscript,
 )
+
+# Derived constant (PCM16 = 2 bytes per sample)
+GEMINI_OUTPUT_BYTES_PER_SECOND = DEFAULT_GEMINI_OUTPUT_SAMPLE_RATE * 2
 
 
 class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
@@ -122,12 +120,12 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
         super().__init__(tick_duration_ms, send_audio_instant=send_audio_instant)
 
         self._chunk_size = int(
-            GEMINI_INPUT_BYTES_PER_SECOND * self._voip_interval_ms / 1000
+            DEFAULT_GEMINI_INPUT_SAMPLE_RATE * 2 * self._voip_interval_ms / 1000
         )
 
         # Gemini output format (24kHz PCM16) - for internal processing
-        self._gemini_output_bytes_per_tick = calculate_gemini_bytes_per_tick(
-            tick_duration_ms, direction="output"
+        self._gemini_output_bytes_per_tick = int(
+            GEMINI_OUTPUT_BYTES_PER_SECOND * tick_duration_ms / 1000
         )
 
         if model is not None and provider is not None:
@@ -143,8 +141,8 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
 
         # Audio format converter (preserves state for streaming)
         self._audio_converter = StreamingTelephonyConverter(
-            input_sample_rate=GEMINI_INPUT_SAMPLE_RATE,
-            output_sample_rate=GEMINI_OUTPUT_SAMPLE_RATE,
+            input_sample_rate=DEFAULT_GEMINI_INPUT_SAMPLE_RATE,
+            output_sample_rate=DEFAULT_GEMINI_OUTPUT_SAMPLE_RATE,
         )
 
         # Async event loop management
