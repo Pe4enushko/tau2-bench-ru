@@ -37,7 +37,6 @@ from tau2.config import (
     DEFAULT_AUDIO_NATIVE_CONNECT_TIMEOUT,
     DEFAULT_AUDIO_NATIVE_DISCONNECT_TIMEOUT,
     DEFAULT_AUDIO_NATIVE_TICK_TIMEOUT_BUFFER,
-    TELEPHONY_ULAW_SILENCE,
 )
 from tau2.data_model.message import ToolCall
 from tau2.environment.tool import Tool
@@ -49,7 +48,6 @@ from tau2.voice.audio_native.gemini.audio_utils import (
     GEMINI_INPUT_SAMPLE_RATE,
     GEMINI_OUTPUT_BYTES_PER_SECOND,
     GEMINI_OUTPUT_SAMPLE_RATE,
-    TELEPHONY_BYTES_PER_SECOND,
     calculate_gemini_bytes_per_tick,
 )
 from tau2.voice.audio_native.gemini.events import (
@@ -68,8 +66,6 @@ from tau2.voice.audio_native.gemini.provider import GeminiLiveProvider, GeminiVA
 from tau2.voice.audio_native.tick_result import (
     TickResult,
     UtteranceTranscript,
-    buffer_excess_audio,
-    get_proportional_transcript,
 )
 
 
@@ -155,23 +151,7 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
         self._bg_loop = BackgroundAsyncLoop()
         self._connected = False
 
-        # Tick state
-        self._tick_count = 0
-        self._cumulative_user_audio_ms = 0
-
-        # Buffered audio and transcripts
-        self._buffered_agent_audio: List[Tuple[bytes, Optional[str]]] = []
-        self._utterance_transcripts: dict[str, UtteranceTranscript] = {}
-        self._current_item_id: Optional[str] = None
-        self._skip_item_id: Optional[str] = None
-
-        # Tool result queue (for sending tool results in next tick)
-        # Each entry: (call_id, name, result_str, request_response, is_error)
-        self._pending_tool_results: List[Tuple[str, str, str, bool, bool]] = []
-
-        # Track tool call info for Gemini (which sends null IDs)
-        # Maps synthetic call_id -> (original_gemini_id, function_name)
-        # We use synthetic IDs internally for tracking, but send original IDs back to Gemini
+        # Gemini-specific: maps synthetic call_id -> (original_gemini_id, function_name)
         self._tool_call_info: Dict[str, Tuple[str, str]] = {}
 
     @property
@@ -266,8 +246,7 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
         self._connected = False
         self._tick_count = 0
         self._cumulative_user_audio_ms = 0
-        self._buffered_agent_audio.clear()
-        self._utterance_transcripts.clear()
+        self.clear_buffers()
         self._tool_call_info.clear()
         self._audio_converter.reset()
         logger.info("DiscreteTimeGeminiAdapter disconnected")
@@ -308,9 +287,78 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
             logger.error(f"Error in run_tick (tick={tick_number}): {e}")
             raise
 
-    async def _async_run_tick(self, user_audio: bytes, tick_number: int) -> TickResult:
-        """Async tick execution."""
-        # Handle pending GoAway reconnection before any session I/O.
+    def send_tool_result(
+        self,
+        call_id: str,
+        result: str,
+        request_response: bool = True,
+        is_error: bool = False,
+    ) -> None:
+        """Queue a tool result, resolving the Gemini ID mapping first.
+
+        Gemini often sends null/empty tool call IDs, so we use synthetic IDs
+        internally. This method looks up the original Gemini ID and function
+        name before queuing.
+        """
+        info = self._tool_call_info.pop(call_id, None)
+        if info is None:
+            logger.warning(
+                f"Unknown tool call ID: {call_id}, using empty ID and 'unknown' name"
+            )
+            original_id = ""
+            name = "unknown"
+        else:
+            original_id, name = info
+
+        # Queue with original Gemini ID and name for batch flushing
+        self._pending_tool_results.append(
+            (original_id, name, result, request_response, is_error)
+        )
+        logger.debug(
+            f"Queued tool result for {name}(gemini_id={original_id!r}, is_error={is_error})"
+        )
+
+    async def _flush_pending_tool_results(self) -> None:
+        """Send pending tool results to Gemini in a single batch call.
+
+        Gemini may respond after each individual send_tool_response,
+        so batching prevents the model from re-calling tools it hasn't
+        seen results for yet.
+        """
+        if not self._pending_tool_results:
+            return
+
+        from google.genai import types
+
+        function_responses = []
+        for (
+            call_id,
+            name,
+            result_str,
+            _request_response,
+            is_error,
+        ) in self._pending_tool_results:
+            payload = {"error": result_str} if is_error else {"output": result_str}
+            function_responses.append(
+                types.FunctionResponse(id=call_id, name=name, response=payload)
+            )
+        await self.provider._session.send_tool_response(
+            function_responses=function_responses
+        )
+        logger.debug(
+            f"Sent {len(function_responses)} tool results to Gemini in one batch"
+        )
+        self._pending_tool_results.clear()
+
+    async def _execute_tick(
+        self,
+        user_audio: bytes,
+        tick_number: int,
+        result: TickResult,
+        tick_start: float,
+    ) -> None:
+        """Gemini-specific: GoAway check, convert audio, send, receive, process."""
+        # Handle pending GoAway reconnection before any session I/O
         if self.provider.needs_reconnection:
             logger.info(
                 f"Tick {tick_number}: performing GoAway reconnection before session I/O"
@@ -319,62 +367,9 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
             if not success:
                 raise RuntimeError("GoAway reconnection failed at tick boundary")
 
-        # Send all pending tool results in a single batch call.
-        # Gemini may respond after each individual send_tool_response,
-        # so batching prevents the model from re-calling tools it hasn't
-        # seen results for yet.
-        if self._pending_tool_results:
-            from google.genai import types
-
-            function_responses = []
-            for (
-                call_id,
-                name,
-                result_str,
-                request_response,
-                is_error,
-            ) in self._pending_tool_results:
-                payload = {"error": result_str} if is_error else {"output": result_str}
-                function_responses.append(
-                    types.FunctionResponse(id=call_id, name=name, response=payload)
-                )
-            await self.provider._session.send_tool_response(
-                function_responses=function_responses
-            )
-            logger.debug(
-                f"Sent {len(function_responses)} tool results to Gemini in one batch"
-            )
-            self._pending_tool_results.clear()
-
         # Convert user audio from telephony to Gemini format
         gemini_audio = self._audio_converter.convert_input(user_audio)
 
-        # Calculate timing
-        tick_start = asyncio.get_running_loop().time()
-        _ = tick_start + (self.tick_duration_ms / 1000)
-
-        # Create tick result
-        result = TickResult(
-            tick_number=tick_number,
-            audio_sent_bytes=len(user_audio),
-            audio_sent_duration_ms=(len(user_audio) / TELEPHONY_BYTES_PER_SECOND)
-            * 1000,
-            user_audio_data=user_audio,
-            cumulative_user_audio_at_tick_start_ms=self._cumulative_user_audio_ms,
-            bytes_per_tick=self.bytes_per_tick,
-            bytes_per_second=TELEPHONY_BYTES_PER_SECOND,
-            silence_byte=TELEPHONY_ULAW_SILENCE,
-        )
-
-        # Add any buffered agent audio from previous tick
-        for chunk_data, item_id in self._buffered_agent_audio:
-            result.agent_audio_chunks.append((chunk_data, item_id))
-        self._buffered_agent_audio.clear()
-
-        # Carry over skip state from previous tick
-        result.skip_item_id = self._skip_item_id
-
-        # Receive events for tick duration
         gemini_audio_received: List[Tuple[bytes, Optional[str]]] = []
 
         async def receive_events():
@@ -389,41 +384,15 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
             receive_events(),
         )
 
-        # Process ALL received events - don't break early
-        # Text events (transcripts) and audio events must all be processed
-        # to ensure transcript text is properly associated with audio.
-        # The _buffer_excess_audio step will limit audio output to bytes_per_tick
-        # and buffer any excess for the next tick.
         for event in events:
-            await self._process_event(result, event, gemini_audio_received)
+            self._process_event(result, event, gemini_audio_received)
 
         # Convert Gemini audio to telephony format and add to result
         for gemini_bytes, item_id in gemini_audio_received:
             telephony_bytes = self._audio_converter.convert_output(gemini_bytes)
             result.agent_audio_chunks.append((telephony_bytes, item_id))
 
-        # Record simulation timing
-        result.tick_sim_duration_ms = result.audio_sent_duration_ms
-
-        # Move excess agent audio to buffer for next tick
-        self._buffered_agent_audio = buffer_excess_audio(result, self.bytes_per_tick)
-
-        # Calculate proportional transcript
-        result.proportional_transcript = get_proportional_transcript(
-            result.agent_audio_chunks, self._utterance_transcripts
-        )
-
-        # Update skip state for next tick
-        self._skip_item_id = result.skip_item_id
-
-        # Update cumulative user audio tracking
-        self._cumulative_user_audio_ms += int(result.audio_sent_duration_ms)
-
-        logger.info(f"Tick {tick_number} completed:\n{result.summary()}")
-
-        return result
-
-    async def _process_event(
+    def _process_event(
         self,
         result: TickResult,
         event: Any,
@@ -437,10 +406,9 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
 
             # Skip audio from truncated item
             if result.skip_item_id is not None and item_id == result.skip_item_id:
-                # Estimate discarded bytes after conversion
                 estimated_telephony_bytes = int(
                     len(event.data)
-                    * TELEPHONY_BYTES_PER_SECOND
+                    * self.audio_format.bytes_per_second
                     / GEMINI_OUTPUT_BYTES_PER_SECOND
                 )
                 result.truncated_audio_bytes += estimated_telephony_bytes
@@ -456,10 +424,9 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
                     self._utterance_transcripts[item_id] = UtteranceTranscript(
                         item_id=item_id
                     )
-                # Estimate telephony bytes for transcript tracking
                 estimated_telephony_bytes = int(
                     len(event.data)
-                    * TELEPHONY_BYTES_PER_SECOND
+                    * self.audio_format.bytes_per_second
                     / GEMINI_OUTPUT_BYTES_PER_SECOND
                 )
                 self._utterance_transcripts[item_id].add_audio(
@@ -492,7 +459,6 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
             self._audio_converter.reset()
 
         elif isinstance(event, GeminiFunctionCallDoneEvent):
-            # Store original Gemini ID (often empty/null)
             original_gemini_id = event.call_id or ""
 
             # Generate synthetic ID for internal tracking (Gemini often sends null IDs)
@@ -501,10 +467,8 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
             )
 
             # Store both original ID and name for when we send the result back
-            # We need the original ID to send to Gemini, and the name for matching
             self._tool_call_info[synthetic_id] = (original_gemini_id, event.name)
 
-            # Extract tool call with synthetic ID (for internal tracking)
             tool_call = ToolCall(
                 id=synthetic_id,
                 name=event.name,
@@ -523,62 +487,15 @@ class DiscreteTimeGeminiAdapter(DiscreteTimeAdapter):
             logger.debug(f"Audio done for item {event.item_id}")
 
         elif isinstance(event, GeminiTimeoutEvent):
-            # Normal timeout, continue
             pass
 
         elif isinstance(event, GeminiGoAwayEvent):
             logger.warning(
                 f"GoAway received, server will disconnect in {event.time_left_seconds}s"
             )
-            # The provider will handle reconnection automatically
 
         elif isinstance(event, GeminiSessionResumptionEvent):
             logger.debug(f"Session resumption update: resumable={event.resumable}")
-            # The provider stores the handle automatically
 
         else:
             logger.debug(f"Event {type(event).__name__} received")
-
-    def send_tool_result(
-        self,
-        call_id: str,
-        result: str,
-        request_response: bool = True,
-        is_error: bool = False,
-    ) -> None:
-        """Queue a tool result to be sent in the next tick.
-
-        Args:
-            call_id: The tool call ID (synthetic ID from our tracking).
-            result: The tool result as a string.
-            request_response: If True, request a response after sending.
-            is_error: If True, the tool call failed and result contains error details.
-        """
-        # Look up original Gemini ID and function name from our tracking dictionary
-        # Pop it since each tool call should only be responded to once
-        info = self._tool_call_info.pop(call_id, None)
-        if info is None:
-            logger.warning(
-                f"Unknown tool call ID: {call_id}, using empty ID and 'unknown' name"
-            )
-            original_id = ""
-            name = "unknown"
-        else:
-            original_id, name = info
-
-        # Queue with original Gemini ID (not our synthetic one) so Gemini can match it
-        self._pending_tool_results.append(
-            (original_id, name, result, request_response, is_error)
-        )
-        logger.debug(
-            f"Queued tool result for {name}(gemini_id={original_id!r}, is_error={is_error})"
-        )
-
-    def clear_buffers(self) -> None:
-        """Clear all internal audio and transcript buffers."""
-        self._buffered_agent_audio.clear()
-        self._utterance_transcripts.clear()
-        self._pending_tool_results.clear()
-        self._tool_call_info.clear()
-        self._audio_converter.reset()
-        self._skip_item_id = None

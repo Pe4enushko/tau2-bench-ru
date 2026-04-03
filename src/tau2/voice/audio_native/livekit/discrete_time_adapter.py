@@ -477,3 +477,9 @@ class LiveKitCascadedAdapter(DiscreteTimeAdapter):
         """
         self._pending_tool_results.append((call_id, result, request_response))
         logger.debug(f"Queued tool result for call_id={call_id}")
+
+    async def _execute_tick(self, user_audio, tick_number, result, tick_start: float):
+        raise NotImplementedError("LiveKit uses its own run_tick")
+
+    async def _flush_pending_tool_results(self):
+        raise NotImplementedError("LiveKit uses its own run_tick")

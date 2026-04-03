@@ -37,7 +37,7 @@ Reference: https://www.alibabacloud.com/help/en/model-studio/realtime
 import asyncio
 import base64
 import json
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from loguru import logger
 
@@ -45,8 +45,6 @@ from tau2.config import (
     DEFAULT_AUDIO_NATIVE_CONNECT_TIMEOUT,
     DEFAULT_AUDIO_NATIVE_DISCONNECT_TIMEOUT,
     DEFAULT_AUDIO_NATIVE_TICK_TIMEOUT_BUFFER,
-    DEFAULT_TELEPHONY_RATE,
-    TELEPHONY_ULAW_SILENCE,
 )
 from tau2.data_model.message import ToolCall
 from tau2.environment.tool import Tool
@@ -72,12 +70,9 @@ from tau2.voice.audio_native.qwen.provider import (
 from tau2.voice.audio_native.tick_result import (
     TickResult,
     UtteranceTranscript,
-    buffer_excess_audio,
-    get_proportional_transcript,
 )
 
 # Telephony format constants
-TELEPHONY_BYTES_PER_SECOND = DEFAULT_TELEPHONY_RATE  # 8000 bytes/sec for μ-law
 
 
 class DiscreteTimeQwenAdapter(DiscreteTimeAdapter):
@@ -144,19 +139,6 @@ class DiscreteTimeQwenAdapter(DiscreteTimeAdapter):
         # Async event loop management
         self._bg_loop = BackgroundAsyncLoop()
         self._connected = False
-
-        # Tick state
-        self._tick_count = 0
-        self._cumulative_user_audio_ms = 0
-
-        # Buffered audio and transcripts (stored in TELEPHONY format)
-        self._buffered_agent_audio: List[Tuple[bytes, Optional[str]]] = []
-        self._utterance_transcripts: dict[str, UtteranceTranscript] = {}
-        self._current_item_id: Optional[str] = None
-        self._skip_item_id: Optional[str] = None
-
-        # Tool result queue (for sending tool results in next tick)
-        self._pending_tool_results: List[Tuple[str, str, bool]] = []
 
     @property
     def provider(self) -> QwenRealtimeProvider:
@@ -244,8 +226,7 @@ class DiscreteTimeQwenAdapter(DiscreteTimeAdapter):
         self._connected = False
         self._tick_count = 0
         self._cumulative_user_audio_ms = 0
-        self._buffered_agent_audio.clear()
-        self._utterance_transcripts.clear()
+        self.clear_buffers()
         self._audio_converter.reset()
         logger.info("DiscreteTimeQwenAdapter disconnected")
 
@@ -283,41 +264,28 @@ class DiscreteTimeQwenAdapter(DiscreteTimeAdapter):
             logger.error(f"Error in run_tick (tick={tick_number}): {e}")
             raise
 
-    async def _async_run_tick(self, user_audio: bytes, tick_number: int) -> TickResult:
-        """Async tick execution."""
-        # Send any pending tool results first
-        for call_id, result_str, request_response in self._pending_tool_results:
-            await self.provider.send_tool_result(call_id, result_str, request_response)
+    async def _flush_pending_tool_results(self) -> None:
+        """Send pending tool results to Qwen."""
+        for (
+            call_id,
+            result_str,
+            _request_response,
+            _is_error,
+        ) in self._pending_tool_results:
+            await self.provider.send_tool_result(call_id, result_str, _request_response)
         self._pending_tool_results.clear()
 
-        # Calculate timing
-        tick_start = asyncio.get_running_loop().time()
-
-        # Create tick result
-        result = TickResult(
-            tick_number=tick_number,
-            audio_sent_bytes=len(user_audio),
-            audio_sent_duration_ms=(len(user_audio) / TELEPHONY_BYTES_PER_SECOND)
-            * 1000,
-            user_audio_data=user_audio,
-            cumulative_user_audio_at_tick_start_ms=self._cumulative_user_audio_ms,
-            bytes_per_tick=self.bytes_per_tick,
-            bytes_per_second=TELEPHONY_BYTES_PER_SECOND,
-            silence_byte=TELEPHONY_ULAW_SILENCE,
-        )
-
-        # Add any buffered agent audio from previous tick (already in telephony format)
-        for chunk_data, item_id in self._buffered_agent_audio:
-            result.agent_audio_chunks.append((chunk_data, item_id))
-        self._buffered_agent_audio.clear()
-
-        # Carry over skip state from previous tick
-        result.skip_item_id = self._skip_item_id
-
+    async def _execute_tick(
+        self,
+        user_audio: bytes,
+        tick_number: int,
+        result: TickResult,
+        tick_start: float,
+    ) -> None:
+        """Qwen-specific: convert audio, send, receive events, process."""
         # Convert telephony audio to Qwen format
         qwen_audio = self._audio_converter.convert_input(user_audio)
 
-        # Send audio and receive events concurrently
         async def receive_events():
             elapsed_so_far = asyncio.get_running_loop().time() - tick_start
             remaining = max(0.01, (self.tick_duration_ms / 1000) - elapsed_so_far)
@@ -330,32 +298,10 @@ class DiscreteTimeQwenAdapter(DiscreteTimeAdapter):
             receive_events(),
         )
 
-        # Process all received events
         for event in events:
-            await self._process_event(result, event)
+            self._process_event(result, event)
 
-        # Record simulation timing
-        result.tick_sim_duration_ms = result.audio_sent_duration_ms
-
-        # Move excess agent audio to buffer for next tick
-        self._buffered_agent_audio = buffer_excess_audio(result, self.bytes_per_tick)
-
-        # Calculate proportional transcript
-        result.proportional_transcript = get_proportional_transcript(
-            result.agent_audio_chunks, self._utterance_transcripts
-        )
-
-        # Update skip state for next tick
-        self._skip_item_id = result.skip_item_id
-
-        # Update cumulative user audio tracking
-        self._cumulative_user_audio_ms += int(result.audio_sent_duration_ms)
-
-        logger.info(f"Tick {tick_number} completed:\n{result.summary()}")
-
-        return result
-
-    async def _process_event(self, result: TickResult, event: Any) -> None:
+    def _process_event(self, result: TickResult, event: Any) -> None:
         """Process a Qwen event."""
         result.events.append(event)
 
@@ -364,7 +310,6 @@ class DiscreteTimeQwenAdapter(DiscreteTimeAdapter):
 
             # Skip audio from truncated item
             if result.skip_item_id is not None and item_id == result.skip_item_id:
-                # Decode, convert, and count discarded bytes
                 if event.delta:
                     qwen_audio = base64.b64decode(event.delta)
                     telephony_audio = self._audio_converter.convert_output(qwen_audio)
@@ -413,7 +358,6 @@ class DiscreteTimeQwenAdapter(DiscreteTimeAdapter):
             result.skip_item_id = self._current_item_id
 
         elif isinstance(event, QwenFunctionCallArgumentsDoneEvent):
-            # Parse arguments
             try:
                 arguments = json.loads(event.arguments) if event.arguments else {}
             except json.JSONDecodeError:
@@ -440,34 +384,7 @@ class DiscreteTimeQwenAdapter(DiscreteTimeAdapter):
             logger.error(f"Qwen error: {event.message}")
 
         elif isinstance(event, QwenTimeoutEvent):
-            # Normal timeout, continue
             pass
 
         else:
             logger.debug(f"Event {type(event).__name__} received")
-
-    def send_tool_result(
-        self,
-        call_id: str,
-        result: str,
-        request_response: bool = True,
-        is_error: bool = False,
-    ) -> None:
-        """Queue a tool result to be sent in the next tick.
-
-        Args:
-            call_id: The tool call ID.
-            result: The tool result as a string.
-            request_response: If True, request a response after sending.
-            is_error: If True, the tool call failed. Currently unused by Qwen.
-        """
-        self._pending_tool_results.append((call_id, result, request_response))
-        logger.debug(f"Queued tool result for call_id={call_id}")
-
-    def clear_buffers(self) -> None:
-        """Clear all internal audio and transcript buffers."""
-        self._buffered_agent_audio.clear()
-        self._utterance_transcripts.clear()
-        self._pending_tool_results.clear()
-        self._skip_item_id = None
-        self._audio_converter.reset()
