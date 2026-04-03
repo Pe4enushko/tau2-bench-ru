@@ -54,9 +54,12 @@ from typing import List, Optional
 
 import pytest
 
+from tau2.config import TELEPHONY_ULAW_SILENCE
 from tau2.environment.tool import Tool
 from tau2.voice.audio_native.adapter import DiscreteTimeAdapter, create_adapter
 from tau2.voice.audio_native.tick_result import TickResult
+
+pytestmark = pytest.mark.full_duplex_integration
 
 # =============================================================================
 # Provider parameterization
@@ -133,8 +136,8 @@ MAX_RESPONSE_TICKS = 75  # 15 seconds at 200ms ticks
 # Speech audio samples of different lengths. Some provider VADs require a
 # minimum speech duration to trigger (e.g., xAI needs ~1s).
 SPEECH_AUDIO = [
-    pytest.param("hello.wav", id="short-720ms"),
-    pytest.param("hi_how_are_you.wav", id="medium-1120ms"),
+    pytest.param("hello.ulaw", id="short-720ms"),
+    pytest.param("hi_how_are_you.ulaw", id="medium-1120ms"),
 ]
 
 
@@ -146,11 +149,10 @@ SPEECH_AUDIO = [
 def load_telephony_audio(filename: str) -> bytes:
     """Load a pre-converted telephony audio file (8kHz mu-law).
 
-    Files are raw mu-law bytes at 8kHz (no header). Generated from WAV files
-    by generate_test_audio.py. The .ulaw extension matches the .wav base name.
+    Files are raw mu-law bytes at 8kHz (no header). Generated from WAV source
+    files by generate_test_audio.py.
     """
-    ulaw_name = filename.replace(".wav", ".ulaw")
-    filepath = TESTDATA_DIR / ulaw_name
+    filepath = TESTDATA_DIR / filename
     if not filepath.exists():
         pytest.skip(f"Test audio not found: {filepath}. Run generate_test_audio.py.")
     return filepath.read_bytes()
@@ -167,7 +169,7 @@ def chunk_audio(
         trailing_silence_chunks: Number of silence chunks to append after speech.
             Helps VAD detect end-of-utterance.
     """
-    silence_byte = b"\x7f"  # mu-law silence
+    silence_byte = TELEPHONY_ULAW_SILENCE
     chunks = []
     for i in range(0, len(audio), chunk_size):
         chunk = audio[i : i + chunk_size]
@@ -182,34 +184,23 @@ def chunk_audio(
 def make_silence(tick_duration_ms: int = TICK_DURATION_MS) -> bytes:
     """Generate one tick of mu-law silence at 8kHz."""
     num_bytes = int(8000 * tick_duration_ms / 1000)
-    return b"\x7f" * num_bytes
+    return TELEPHONY_ULAW_SILENCE * num_bytes
 
 
 def _make_order_tool() -> Tool:
     """Create the get_order_status tool used in tool-call tests."""
 
     def get_order_status(order_id: str) -> str:
-        """Get the status of a customer order."""
+        """Get the status of a customer order by order ID.
+
+        Use this whenever the user asks about an order.
+
+        Args:
+            order_id: The order ID to look up.
+        """
         return f"Order {order_id} is shipped and arriving tomorrow."
 
-    return Tool(
-        name="get_order_status",
-        description=(
-            "Get the status of a customer order by order ID. "
-            "Use this whenever the user asks about an order."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "order_id": {
-                    "type": "string",
-                    "description": "The order ID to look up",
-                },
-            },
-            "required": ["order_id"],
-        },
-        func=get_order_status,
-    )
+    return Tool(get_order_status)
 
 
 # =============================================================================
@@ -229,6 +220,10 @@ def assert_played_audio_length(
     result: TickResult, adapter: DiscreteTimeAdapter
 ) -> None:
     """Assert that get_played_agent_audio returns exactly bytes_per_tick."""
+    assert result.bytes_per_tick > 0, (
+        f"TickResult.bytes_per_tick is {result.bytes_per_tick} — "
+        "adapter.run_tick() returned a TickResult without setting bytes_per_tick"
+    )
     played = result.get_played_agent_audio()
     assert len(played) == adapter.bytes_per_tick, (
         f"get_played_agent_audio returned {len(played)} bytes, "
@@ -370,7 +365,7 @@ class TestSingleTurn:
     def test_single_turn_reply(
         self, connected_adapter: DiscreteTimeAdapter, audio_file: str
     ):
-        """Send speech audio, verify agent responds with audio."""
+        """Send speech audio, verify agent responds with audio and transcript."""
         audio = load_telephony_audio(audio_file)
         chunks = chunk_audio(audio, connected_adapter.bytes_per_tick)
 
@@ -380,6 +375,21 @@ class TestSingleTurn:
         assert got_audio, (
             f"Agent did not produce audio within {len(results)} ticks "
             f"({len(results) * TICK_DURATION_MS}ms) for {audio_file}"
+        )
+
+        # Drain a few more ticks to let transcript arrive (may lag behind audio)
+        silence = make_silence()
+        for tick in range(10):
+            result = connected_adapter.run_tick(
+                silence, tick_number=len(results) + tick + 1
+            )
+            results.append(result)
+            assert_audio_capping(result, connected_adapter)
+
+        got_transcript = any(r.proportional_transcript for r in results)
+        assert got_transcript, (
+            f"Agent produced audio but no transcript within {len(results)} ticks "
+            f"for {audio_file}"
         )
 
 
@@ -393,7 +403,7 @@ class TestMultiTurn:
 
     def test_multi_turn_reply(self, connected_adapter: DiscreteTimeAdapter):
         """Two consecutive exchanges, both produce audio responses."""
-        t1_audio = load_telephony_audio("hi_how_are_you.wav")
+        t1_audio = load_telephony_audio("hi_how_are_you.ulaw")
         t1_chunks = chunk_audio(t1_audio, connected_adapter.bytes_per_tick)
 
         # Turn 1: send speech, wait for response
@@ -410,9 +420,10 @@ class TestMultiTurn:
                 silence, tick_number=len(results_t1) + tick + 1
             )
             assert_audio_capping(result, connected_adapter)
+            assert_played_audio_length(result, connected_adapter)
 
         # Turn 2: send different audio, wait for response
-        t2_audio = load_telephony_audio("help_me.wav")
+        t2_audio = load_telephony_audio("help_me.ulaw")
         t2_chunks = chunk_audio(t2_audio, connected_adapter.bytes_per_tick)
 
         tick_offset = len(results_t1) + 20
@@ -451,7 +462,7 @@ class TestToolCall:
             modality="audio",
         )
 
-        audio = load_telephony_audio("check_order_12345.wav")
+        audio = load_telephony_audio("check_order_12345.ulaw")
         chunks = chunk_audio(audio, adapter.bytes_per_tick)
 
         # Phase 1: send audio and wait for tool call
@@ -512,8 +523,8 @@ class TestBargeIn:
         )
 
         # Step 2: while agent is producing audio, send speech to trigger barge-in.
-        # Use "help_me.wav" as the interrupting speech.
-        interrupt_audio = load_telephony_audio("help_me.wav")
+        # Use "help_me.ulaw" as the interrupting speech.
+        interrupt_audio = load_telephony_audio("help_me.ulaw")
         interrupt_chunks = chunk_audio(
             interrupt_audio, connected_adapter.bytes_per_tick
         )
