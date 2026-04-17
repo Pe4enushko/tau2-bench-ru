@@ -1,0 +1,396 @@
+[{
+    "id": "create_task_1",
+    "description": {
+      "purpose": "Проверка функциональности create_task",
+      "notes": "Базовый тест создания задачи с простым описанием"
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Ты — сетевой администратор, который постоянно что-то забывает. Тебе нужно создать задачу, чтобы не пропустить важное совещание. Ты точно помнишь, что оно важное, но уже не помнишь, о чём. Попроси создать новую задачу под названием 'Важное совещание' для user_1."
+    },
+    "ticket": "Пользователю нужно создать задачу для предстоящего совещания. Создать новую задачу 'Важное совещание' для user_1.",
+    "evaluation_criteria": {
+      "actions": [
+        {
+          "action_id": "create_1",
+          "name": "create_task",
+          "arguments": {
+            "user_id": "user_1",
+            "title": "Important Meeting"
+          },
+          "info": "Создать новую задачу для совещания"
+        }
+      ],
+      "nl_assertions": [
+        "Агент подтвердил, что задача успешно создана"
+      ]
+    }
+  },
+  {
+    "id": "create_task_1_with_env_assertions",
+    "description": {
+      "purpose": "Проверка функциональности create_task",
+      "notes": "Базовый тест создания задачи с простым названием"
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Ты — сетевой администратор, вечно погружённый в мысли о конфигурации маршрутизаторов. Тебе напомнили, что нужно поставить задачу на совещание, но ты уже потерял листочек с деталями. Попроси создать задачу 'Важное совещание' для user_1."
+    },
+    "ticket": "Пользователю нужно создать задачу для предстоящего совещания. Создать новую задачу 'Важное совещание' для user_1.",
+    "evaluation_criteria": {
+      "actions": [
+        {
+          "action_id": "create_1",
+          "name": "create_task",
+          "arguments": {
+            "user_id": "user_1",
+            "title": "Important Meeting"
+          },
+          "info": "Создать новую задачу для совещания"
+        }
+      ],
+      "env_assertions": [
+        {
+          "env_type": "assistant",
+          "func_name": "assert_task_status",
+          "arguments": {"task_id": "task_2", "expected_status": "pending"}
+        }
+      ],
+      "nl_assertions": [
+        "Агент подтвердил, что задача успешно создана"
+      ],
+      "reward_basis": ["DB", "ENV_ASSERTION"]
+    }
+  },
+  {
+    "id": "create_task_1_nl_eval",
+    "description": {
+      "purpose": "Проверка функциональности create_task",
+      "notes": "Базовый тест создания задачи с простым названием"
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Ты — сетевой администратор, который периодически забывает, зачем вообще открыл этот чат. Тебе нужна задача для совещания — ты это точно помнишь. Попроси создать новую задачу 'Важное совещание' для user_1. Потом, немного растерявшись, попроси агента сказать тебе что-нибудь приятное — просто чтобы день лучше пошёл."
+    },
+    "ticket": "Пользователю нужно создать задачу для совещания. Создать новую задачу 'Важное совещание' для user_1. Потом сделать пользователю комплимент.",
+    "evaluation_criteria": {
+      "nl_assertions": [
+        "Задача успешно создана",
+        "Пользователю сделан комплимент"
+      ]
+    }
+  },
+  {
+    "id": "update_task_1",
+    "description": {
+      "purpose": "Проверка функциональности update_task_status",
+      "notes": "Базовый тест обновления статуса задачи"
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Ты — сетевой администратор, который наконец вспомнил, что давно закрыл какую-то задачу, но забыл её пометить. Попроси пометить task_1 как выполненную."
+    },
+    "ticket": "Пользователю нужно обновить статус task_1 на 'выполнено'.",
+    "evaluation_criteria": {
+      "actions": [
+        {
+          "action_id": "update_1",
+          "name": "update_task_status",
+          "arguments": {
+            "task_id": "task_1",
+            "status": "completed"
+          },
+          "info": "Обновить статус задачи на 'выполнено'"
+        }
+      ],
+      "nl_assertions": [
+        "Агент подтвердил, что статус задачи успешно обновлён"
+      ]
+    }
+  },
+  {
+    "id": "update_task_with_message_history",
+    "description": {
+      "purpose": "Проверка функциональности update_task_status с предыдущей историей переписки",
+      "notes": "Тест обновления статуса задачи с начальной историей сообщений, отражающей предыдущий контекст"
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Продолжи разговор об управлении задачами. Ранее вы договорились создать задачу. Ты с трудом вспоминаешь этот разговор, но тебе кажется, что задачу уже сделали, так что попроси пометить её как выполненную."
+    },
+    "initial_state": {
+      "message_history": [
+        {
+          "role": "user",
+          "content": "Мне нужно создать задачу для совещания по обзору проекта.",
+          "turn_idx": 0
+        },
+        {
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "id": "call_1",
+              "name": "create_task",
+              "arguments": {
+                "user_id": "user_1",
+                "title": "Project Review",
+                "description": "Review Q4 project status"
+              }
+            }
+          ],
+          "turn_idx": 0
+        },
+        {
+          "role": "tool",
+          "id": "call_1",
+          "content": "{\"task_id\":\"task_2\",\"title\":\"Project Review\",\"description\":\"Review Q4 project status\",\"status\":\"pending\"}",
+          "turn_idx": 0
+        },
+        {
+          "role": "assistant",
+          "content": "Я создал задачу 'Обзор проекта'. Задаче присвоен идентификатор task_2, текущий статус — 'ожидает выполнения'.",
+          "turn_idx": 0
+        }
+      ]
+    },
+    "evaluation_criteria": {
+      "actions": [
+        {
+          "action_id": "update_1",
+          "name": "update_task_status",
+          "arguments": {
+            "task_id": "task_2",
+            "status": "completed"
+          },
+          "info": "Обновить статус задачи на 'выполнено'"
+        }
+      ],
+      "nl_assertions": [
+        "Агент учёл предыдущий контекст разговора",
+        "Агент подтвердил, что статус задачи успешно обновлён"
+      ]
+    }
+  },
+  {
+    "id": "update_task_with_initialization_data",
+    "description": {
+      "purpose": "Проверка функциональности update_task_status с предыдущей историей переписки",
+      "notes": "Тест обновления статуса задачи с начальной историей сообщений, отражающей предыдущий контекст"
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Продолжи разговор об управлении задачами. Ранее обсуждалось создание задачи с идентификатором task_2. Ты примерно помнишь, что она была создана — кажется, что-то про обзор... или про апгрейд? В любом случае, попроси пометить её как выполненную."
+    },
+    "ticket": "Пользователю нужно обновить статус task_2 на 'выполнено'.",
+    "initial_state": {
+      "initialization_data": {
+        "agent_data": {
+          "tasks": {
+            "task_2": {
+              "task_id": "task_2",
+              "title": "Project Review",
+              "description": "Review Q4 project status",
+              "status": "pending"
+            }
+          },
+          "users": {
+            "user_1": {
+              "tasks": ["task_1", "task_2"]
+            }
+          }
+        }
+      }
+    },
+    "evaluation_criteria": {
+      "actions": [
+        {
+          "action_id": "update_1",
+          "name": "update_task_status",
+          "arguments": {
+            "task_id": "task_2",
+            "status": "completed"
+          },
+          "info": "Обновить статус задачи на 'выполнено'"
+        }
+      ],
+      "communicate_info": [
+        "Агент учёл предыдущий контекст разговора",
+        "Агент подтвердил, что статус задачи успешно обновлён"
+      ]
+    }
+  },
+  {
+    "id": "update_task_with_initialization_actions",
+    "description": {
+      "purpose": "Проверка функциональности update_task_status с предыдущей историей переписки",
+      "notes": "Тест обновления статуса задачи с начальной историей сообщений, отражающей предыдущий контекст"
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Продолжи разговор об управлении задачами. Ранее обсуждалось создание задачи с идентификатором task_2. Ты с трудом припоминаешь подробности, но уверен, что задачу уже выполнил — видимо, между двумя перезагрузками сервера. Попроси пометить task_2 как выполненную."
+    },
+    "ticket": "Пользователю нужно обновить статус task_2 на 'выполнено'.",
+    "initial_state": {
+      "initialization_actions": [
+        {
+          "env_type": "assistant",
+          "func_name": "create_task",
+          "arguments": {"user_id": "user_1", "title": "Project Review", "description": "Review Q4 project status"}
+        }
+      ]
+    },
+    "evaluation_criteria": {
+      "actions": [
+        {
+          "action_id": "update_1",
+          "name": "update_task_status",
+          "arguments": {
+            "task_id": "task_2",
+            "status": "completed"
+          },
+          "info": "Обновить статус задачи на 'выполнено'"
+        }
+      ],
+      "nl_assertions": [
+        "Агент учёл предыдущий контекст разговора",
+        "Агент подтвердил, что статус задачи успешно обновлён"
+      ]
+    }
+  },
+{
+  "id": "update_task_with_history_and_env_assertions",
+  "description": {
+    "purpose": "Проверка функциональности update_task_status с историей переписки и проверками окружения",
+    "notes": "Тест обновления статуса задачи с начальной историей сообщений, отражающей предыдущий контекст"
+  },
+  "user_scenario": {
+    "persona": "Рассеяный сетевой администратор",
+    "instructions": "Продолжи разговор об управлении задачами. Ранее обсуждалось создание задачи с идентификатором task_2. Ты плохо помнишь, что именно там было, но раз уж задача есть — значит, ты её сделал. Попроси пометить task_2 как выполненную."
+  },
+  "initial_state": {
+    "message_history": [
+      {
+        "role": "user",
+        "content": "Мне нужно создать задачу для совещания по обзору проекта.",
+        "turn_idx": 0
+      },
+      {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "name": "create_task",
+            "arguments": {
+              "user_id": "user_1",
+              "title": "Project Review",
+              "description": "Review Q4 project status"
+            }
+          }
+        ],
+        "turn_idx": 0
+      },
+      {
+        "role": "tool",
+        "id": "call_1",
+        "content": "{\"task_id\":\"task_2\",\"title\":\"Project Review\",\"description\":\"Review Q4 project status\",\"status\":\"pending\"}",
+        "turn_idx": 0
+      },
+      {
+        "role": "assistant",
+        "content": "Я создал задачу 'Обзор проекта'. Задаче присвоен идентификатор task_2, текущий статус — 'ожидает выполнения'.",
+        "turn_idx": 0
+      }
+    ]
+  },
+  "evaluation_criteria": {
+    "env_assertions": [
+      {
+        "env_type": "assistant",
+        "func_name": "assert_task_status",
+        "arguments": {"task_id": "task_2", "expected_status": "completed"}
+      }
+    ],
+    "nl_assertions": [
+      "Агент учёл предыдущий контекст разговора",
+      "Агент подтвердил, что статус задачи успешно обновлён"
+      ],
+      "reward_basis": ["ENV_ASSERTION"]
+    }
+  },
+  {
+    "id": "update_task_with_user_tools",
+    "description": {
+      "purpose": "Проверка вызова пользовательских инструментов check_notifications и dismiss_notification",
+      "notes": "Пользователь проверяет входящие уведомления, видит назначенную задачу, просит агента отметить её выполненной, затем закрывает уведомление."
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Ты только что вспомнил, что должны были прийти какие-то уведомления. Воспользуйся инструментом check_notifications, чтобы проверить. Ты увидишь, что на тебя назначена задача task_1 ('Тестовая задача'). Сообщи агенту, что задачу ты выполнил — между делом, пока перезагружался коммутатор — и попроси обновить статус на 'выполнено'. После подтверждения агента используй dismiss_notification, чтобы закрыть уведомление 'notif_1'."
+    },
+    "ticket": "Пользователь проверяет уведомления, видит, что ему назначена task_1, и просит агента пометить task_1 как выполненную.",
+    "initial_state": {
+      "initialization_actions": [
+        {
+          "env_type": "user",
+          "func_name": "add_notification",
+          "arguments": {
+            "notification_id": "notif_1",
+            "message": "Вам назначена задача 'Тестовая задача'.",
+            "task_id": "task_1"
+          }
+        }
+      ]
+    },
+    "evaluation_criteria": {
+      "actions": [
+        {
+          "action_id": "update_1",
+          "name": "update_task_status",
+          "arguments": {
+            "task_id": "task_1",
+            "status": "completed"
+          },
+          "info": "Обновить статус задачи на 'выполнено'"
+        }
+      ],
+      "env_assertions": [
+        {
+          "env_type": "user",
+          "func_name": "assert_notification_status",
+          "arguments": {"notification_id": "notif_1", "expected_status": "read"},
+          "assert_value": true
+        }
+      ],
+      "nl_assertions": [
+        "Агент подтвердил, что статус задачи успешно обновлён"
+      ],
+      "reward_basis": ["DB", "ACTION", "ENV_ASSERTION"]
+    }
+  },
+  {
+    "id": "impossible_task_1",
+    "description": {
+      "purpose": "Проверка функциональности удаления задачи",
+      "notes": "Пользователь просит агента удалить задачи."
+    },
+    "user_scenario": {
+      "persona": "Рассеяный сетевой администратор",
+      "instructions": "Ты посмотрел на список своих задач и решил, что надо всё снести и начать с чистого листа — как при переустановке системы. Попроси удалить все свои текущие задачи."
+    },
+    "ticket": "Пользователю нужно удалить все свои текущие задачи.",
+    "evaluation_criteria": {
+      "actions": [
+        {
+          "action_id": "transfer_1",
+          "name": "transfer_to_human_agents",
+          "arguments": {
+            "summary": "User needs to delete all their current tasks. This is not possible to do with the tools available."
+          },
+          "compare_args": [],
+          "info": "Перенаправить пользователя к оператору"
+        }
+      ],
+      "reward_basis": ["DB", "ACTION"]
+    }
+  }
+]

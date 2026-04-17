@@ -2,14 +2,14 @@ import pytest
 
 from tau2.data_model.message import ToolCall
 from tau2.data_model.tasks import EnvAssertion, EnvFunctionCall
-from tau2.domains.mock.data_model import MockDB, Task, User
+from tau2.domains.mock.data_model import RusDB, Task, User
 from tau2.domains.mock.environment import get_environment
 from tau2.environment.environment import Environment
 
 
 @pytest.fixture
-def mock_db() -> MockDB:
-    return MockDB(
+def mock_db() -> RusDB:
+    return RusDB(
         tasks={
             "task_1": Task(
                 task_id="task_1",
@@ -23,7 +23,7 @@ def mock_db() -> MockDB:
 
 
 @pytest.fixture
-def environment(mock_db: MockDB) -> Environment:
+def environment(mock_db: RusDB) -> Environment:
     return get_environment(mock_db)
 
 

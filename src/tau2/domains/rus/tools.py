@@ -2,7 +2,7 @@ from tau2.domains.mock.data_model import RusDB, Task, TaskStatus, User
 from tau2.environment.toolkit import ToolKitBase, ToolType, is_tool
 
 
-class MockTools(ToolKitBase):
+class RusTools(ToolKitBase):
     """Simple tools for the mock domain."""
 
     db: RusDB

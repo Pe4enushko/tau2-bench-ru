@@ -5,7 +5,7 @@ from tau2.data_model.tasks import Task
 from tau2.domains.mock.data_model import RusDB
 from tau2.domains.mock.tools import MockTools
 from tau2.domains.mock.user_data_model import RusUserDB
-from tau2.domains.mock.user_tools import RusUserTools
+from tau2.domains.mock.user_tools import MockUserTools
 from tau2.domains.mock.utils import (
     MOCK_DB_PATH,
     MOCK_POLICY_PATH,
@@ -27,7 +27,7 @@ def get_environment(
     tools = MockTools(db)
     if user_db is None:
         user_db = RusUserDB.load(MOCK_USER_DB_PATH)
-    user_tools = RusUserTools(user_db)
+    user_tools = MockUserTools(user_db)
     if not solo_mode:
         policy_path = MOCK_POLICY_PATH
     else:

@@ -2,7 +2,7 @@ from tau2.domains.mock.user_data_model import RusUserDB, Notification
 from tau2.environment.toolkit import ToolKitBase, ToolType, is_tool
 
 
-class MockUserTools(ToolKitBase):
+class RusUserTools(ToolKitBase):
     """User-side tools for the mock domain.
 
     Simulates a notification inbox where the user can check and manage
