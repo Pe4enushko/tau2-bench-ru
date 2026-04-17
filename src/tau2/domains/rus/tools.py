@@ -1,4 +1,4 @@
-from tau2.domains.mock.data_model import RusDB, Task, TaskStatus, User
+from tau2.domains.rus.data_model import RusDB, Task, TaskStatus, User
 from tau2.environment.toolkit import ToolKitBase, ToolType, is_tool
 
 
@@ -66,6 +66,28 @@ class RusTools(ToolKitBase):
 
         task = self.db.tasks[task_id]
         task.status = status
+        return task
+
+    @is_tool(ToolType.WRITE)
+    def update_task_deadline(self, task_id: str, deadline: str) -> Task:
+        """
+        Update the deadline of a task.
+
+        Args:
+            task_id: The ID of the task to update
+            deadline: The new deadline of the task (in string format)
+
+        Returns:
+            The updated task
+
+        Raises:
+            ValueError: If the task is not found
+        """
+        if task_id not in self.db.tasks:
+            raise ValueError(f"Task {task_id} not found")
+
+        task = self.db.tasks[task_id]
+        task.deadline = deadline
         return task
 
     def assert_number_of_tasks(self, user_id: str, expected_number: int) -> bool:

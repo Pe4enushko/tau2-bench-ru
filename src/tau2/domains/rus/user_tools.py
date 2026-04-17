@@ -1,4 +1,4 @@
-from tau2.domains.mock.user_data_model import RusUserDB, Notification
+from tau2.domains.rus.user_data_model import RusUserDB, Notification
 from tau2.environment.toolkit import ToolKitBase, ToolType, is_tool
 
 

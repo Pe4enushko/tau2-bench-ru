@@ -21,7 +21,7 @@ class Notification(BaseModelNoExtra):
     )
 
 
-class MockUserDB(DB):
+class RusUserDB(DB):
     """Simple user database with a notification inbox."""
 
     notifications: Dict[str, Notification] = Field(

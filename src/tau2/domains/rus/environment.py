@@ -2,16 +2,16 @@ from pathlib import Path
 from typing import Optional
 
 from tau2.data_model.tasks import Task
-from tau2.domains.mock.data_model import RusDB
-from tau2.domains.mock.tools import MockTools
-from tau2.domains.mock.user_data_model import RusUserDB
-from tau2.domains.mock.user_tools import MockUserTools
-from tau2.domains.mock.utils import (
-    MOCK_DB_PATH,
-    MOCK_POLICY_PATH,
-    MOCK_POLICY_SOLO_PATH,
-    MOCK_TASK_SET_PATH,
-    MOCK_USER_DB_PATH,
+from tau2.domains.rus.data_model import RusDB
+from tau2.domains.rus.tools import MockTools
+from tau2.domains.rus.user_data_model import RusUserDB
+from tau2.domains.rus.user_tools import RusUserTools
+from tau2.domains.rus.utils import (
+    RUS_DB_PATH,
+    RUS_POLICY_PATH,
+    RUS_POLICY_SOLO_PATH,
+    RUS_TASK_SET_PATH,
+    RUS_USER_DB_PATH,
 )
 from tau2.environment.environment import Environment
 from tau2.utils import load_file

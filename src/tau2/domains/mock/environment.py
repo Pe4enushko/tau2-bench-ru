@@ -5,7 +5,7 @@ from tau2.data_model.tasks import Task
 from tau2.domains.mock.data_model import RusDB
 from tau2.domains.mock.tools import MockTools
 from tau2.domains.mock.user_data_model import RusUserDB
-from tau2.domains.mock.user_tools import RusUserTools
+from tau2.domains.mock.user_tools import MockUserTools
 from tau2.domains.mock.utils import (
     MOCK_DB_PATH,
     MOCK_POLICY_PATH,
